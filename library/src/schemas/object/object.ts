@@ -55,7 +55,7 @@ export function object<TObjectShape extends ObjectShape>(
   const [error, pipe] = getDefaultArgs(arg2, arg3);
 
   // Create cached entries
-  let cachedEntries: [string, BaseSchema<any>][];
+  let cachedEntries: (string | BaseSchema<any>['_parse'])[];
 
   // Create and return object schema
   return {
@@ -95,19 +95,31 @@ export function object<TObjectShape extends ObjectShape>(
       }
 
       // Cache object entries lazy
-      cachedEntries = cachedEntries || Object.entries(object);
+      // Make a flat array of [string, schema, string, schema] instead of regular Object.entries()
+      // For better CPU cache locality
+      if (!cachedEntries) {
+        cachedEntries = [];
+        const keys = Object.keys(object);
+        for (let k = 0; k < keys.length; ++k) {
+          const key = keys[k];
+          const parser = object[key];
+          cachedEntries.push(key, parser._parse);
+        }
+      }
 
       // Create issues and output
       let issues: Issues | undefined;
       const output: Record<string, any> = {};
 
       // Parse schema of each key
-      for (const [key, schema] of cachedEntries) {
-        // Get value by key
-        const value = (input as Record<string, unknown>)[key];
+      for (let i = 0; i < cachedEntries.length; i += 2) {
+        // Get key and value
+        const key = cachedEntries[i] as string;
+        const value: any = (input as Record<string, unknown>)[key as string];
+        const parser = cachedEntries[i + 1] as BaseSchema<any>['_parse'];
 
         // Get parse result of value
-        const result = schema._parse(value, info);
+        const result = parser(value, info);
 
         // If there are issues, capture them
         if (result.issues) {
